@@ -1,0 +1,99 @@
+#include <ESP8266WiFi.h>
+#include <PubSubClient.h>
+
+// ISR for detecting impulses must be declared before setup()
+void ICACHE_RAM_ATTR onImpulse();
+
+const char* ssid = "";     
+const char* password = "";    
+
+// Values for MQTT broker
+const char *MQTT_HOST = "mqtt.datacake.co";
+const int MQTT_PORT_INSECURE = ;
+const int MQTT_PORT = ;
+const char *MQTT_USER = "";
+const char *MQTT_PASS = "";
+
+#define mqtt_topic ""
+#define mqtt_gammaray_pub ""
+#define mqtt_cpm_pub ""
+
+// Libreries for MQTT comunication
+WiFiClient mqttWifiClient;
+PubSubClient mqttClient(mqttWifiClient);
+
+
+// Geiger counter variables
+volatile unsigned long impulses = 0; // Count impulses in ISR
+unsigned long lastSendTime = 0; // Last time data was sent
+const long sendInterval = 300000; // Interval to send data (5 minutes in milliseconds)
+#define CONV_FACTOR 0.00812 // Conversion factor - CPM to uSV/h
+
+void setup() {
+  Serial.begin(9600);
+  setupWiFi();
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT_INSECURE);
+
+  // Setup interrupt for Geiger counter impulses, adjust the pin number as needed
+  attachInterrupt(digitalPinToInterrupt(13), onImpulse, FALLING);
+}
+
+void loop() {
+  if (!mqttClient.connected()) {
+    reconnect();
+  }
+  mqttClient.loop();
+
+  unsigned long currentTime = millis();
+  if (currentTime - lastSendTime >= sendInterval) {
+    // Calculate average counts per minute (CPM)
+    unsigned long cpm = (impulses * 60000) / sendInterval;
+    float averageRadiation = cpm * CONV_FACTOR; // Convert to µSv/h
+
+    // Send average radiation value to MQTT
+    char message[50];
+    snprintf(message, 50, "%f", averageRadiation);
+    mqttClient.publish(mqtt_gammaray_pub, String(averageRadiation).c_str(), true);
+    
+
+
+    // Reset counters
+    impulses = 0;
+    lastSendTime = currentTime;
+
+    Serial.print("Sent average radiation value: ");
+    Serial.println(message);
+  }
+}
+
+// ISR to count impulses from the Geiger counter
+void ICACHE_RAM_ATTR onImpulse() {
+  impulses++;
+}
+
+void setupWiFi() {
+  WiFi.begin(ssid, password);
+  Serial.println("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("WiFi connected");
+}
+
+void reconnect() {
+  // Loop until we're reconnected
+  while (!mqttClient.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    // Attempt to connect, modify as needed
+    if (mqttClient.connect("", MQTT_USER, MQTT_PASS)) {
+      Serial.println("connected");
+      mqttClient.subscribe(mqtt_topic);
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
